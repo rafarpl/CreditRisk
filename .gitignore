@@ -1,0 +1,11 @@
+/.DS_Store
+/.vscode
+/__pycache__
+/abt.csv
+/feature_importance.csv
+/feature_importance_baseline.csv
+/lgbm_importances.png
+/mnt
+/raw_data
+/submission.csv
+/submission_baseline.csv
