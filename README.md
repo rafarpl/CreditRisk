@@ -1,5 +1,7 @@
 # Home Credit Default Risk
 
+Repositório: https://github.com/rafarpl/CreditRisk
+
 Modelo de classificação binária para prever inadimplência de clientes de crédito.
 Utiliza **LightGBM** com **K-Fold Cross Validation** e features engenheiradas a partir de 8 tabelas do dataset Home Credit.
 
