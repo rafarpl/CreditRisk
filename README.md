@@ -28,7 +28,7 @@ Identificar clientes com maior probabilidade de **não pagar um empréstimo** (`
 3. **Modelagem** (`Model/`):
    - `baseline.py`: treina um modelo LightGBM baseline, sem tuning, para servir de referência de performance (`submission_baseline.csv`, `feature_importance_baseline.csv`).
    - `tune.py`: realiza a otimização de hiperparâmetros do LightGBM e salva o melhor conjunto encontrado em `best_params.json`.
-   - `train.py`: treina o modelo final com os hiperparâmetros otimizados, usando K-Fold Cross Validation. Salva predições OOF e de teste (`submission.csv`), além da importância de features (`feature_importance.csv`, `lgbm_importances.png`).
+   - `train.py`: treina o modelo final com os hiperparâmetros otimizados, usando K-Fold Cross Validation. Salva predições de teste (`submission.csv`) e a importância de features (`feature_importance.csv`). O gráfico `lgbm_importances.png` é gerado à parte, pelo notebook `evaluation.ipynb`.
 
 4. **Avaliação e análise** (`Analysis/`):
    - `exp_analysis.ipynb`: análise exploratória dos dados limpos.
@@ -42,23 +42,23 @@ Identificar clientes com maior probabilidade de **não pagar um empréstimo** (`
 ```
 CreditRisk/
 ├── Analysis/
-│   ├── evaluation.ipynb           → avaliação do modelo (AUC, ROC, calibração)
+│   ├── evaluation.ipynb           → avaliação do modelo (AUC, ROC, calibração) + gera lgbm_importances.png
 │   ├── evaluation_part2.ipynb     → avaliação complementar / interpretabilidade
 │   ├── exp_analysis.ipynb         → análise exploratória dos dados limpos
 │   └── kpi_analysis.ipynb         → análise de KPIs de negócio
 │
 ├── DataPipeline/
 │   ├── data_sanitization.py       → limpeza e padronização dos dados brutos
-│   ├── abt_transform.py           → construção da ABT com features agregadas
-│   └── mnt/                       → ponto de montagem / dados auxiliares
+│   └── abt_transform.py           → construção da ABT com features agregadas
 │
 ├── Model/
 │   ├── baseline.py                → treino do modelo baseline (sem tuning)
 │   ├── tune.py                    → otimização de hiperparâmetros
 │   ├── train.py                   → treino final com K-Fold Cross Validation + serializa model.pkl
 │   ├── predict.py                 → predição de um cliente pelo SK_ID_CURR (entregável individual)
-│   ├── model.pkl                  → artefato do modelo final (gerado por train.py)
-│   └── raw_data/                  → CSVs originais do dataset
+│   └── model.pkl                  → artefato do modelo final (gerado por train.py)
+│
+├── raw_data/                       → CSVs originais do dataset (não versionado)
 │
 ├── MLOps/                          → entregável individual (deploy e arquitetura)
 │   ├── README.md                  → arquitetura da solução + monitoramento + agentes de IA
@@ -140,8 +140,10 @@ só para **validação** — estima o AUC honestamente e o nº de árvores via e
 e depois treina **um modelo final** em 100% dos dados rotulados. Gera:
 - `submission.csv` — predições do conjunto de teste
 - `feature_importance.csv` — importância das features
-- `lgbm_importances.png` — gráfico de importância das features
 - `Model/model.pkl` — modelo final serializado (usado por `Model/predict.py` e pela API) — ver seção 7
+
+> `lgbm_importances.png` (gráfico) **não** é gerado por este comando — é produzido à
+> parte pelo notebook `Analysis/evaluation.ipynb` (seção 6, abaixo).
 
 > Para rodar rápido em máquinas com pouca RAM/CPU (ex.: debug), defina a variável de
 > ambiente `TRAIN_SAMPLE_ROWS` (ex.: `TRAIN_SAMPLE_ROWS=15000 python -m Model.train`)
