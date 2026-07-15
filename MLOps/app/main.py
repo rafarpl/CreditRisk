@@ -26,7 +26,13 @@ if _REPO_ROOT not in sys.path:
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from Model.predict import DEFAULT_THRESHOLD, MODEL_PATH, predict_by_id
+from Model.predict import (
+    API_FEATURES,
+    DEFAULT_THRESHOLD,
+    MODEL_PATH,
+    get_client_snapshot,
+    predict_by_id,
+)
 
 app = FastAPI(
     title="Credit Risk — Serviço de Predição",
@@ -45,6 +51,19 @@ class PredictRequest(BaseModel):
         DEFAULT_THRESHOLD, ge=0.0, le=1.0,
         description="Corte de decisão aprovar/negar (default 0.5).",
     )
+    overrides: Optional[dict[str, float]] = Field(
+        None,
+        description=(
+            "Sobrescreve valores de features do cliente para simular cenários "
+            f"hipotéticos (ex.: {API_FEATURES}). Features fora dessa lista "
+            "também são aceitas, mas não têm suporte na UI de demo."
+        ),
+    )
+
+
+class ClientSnapshotResponse(BaseModel):
+    sk_id_curr: int
+    features: dict[str, Optional[float]]
 
 
 class PredictResponse(BaseModel):
@@ -71,10 +90,25 @@ def health():
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     try:
-        return predict_by_id(req.sk_id_curr, req.threshold)
+        return predict_by_id(req.sk_id_curr, req.threshold, overrides=req.overrides)
     except FileNotFoundError as e:
         # Modelo não treinado ainda — erro de disponibilidade do serviço, não do cliente.
         raise HTTPException(status_code=503, detail=str(e))
     except KeyError as e:
         # SK_ID_CURR não existe na ABT.
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/client/{sk_id_curr}", response_model=ClientSnapshotResponse)
+def client_snapshot(sk_id_curr: int):
+    """
+    Valores reais atuais das API_FEATURES de um cliente — usado pela UI de
+    demo para pré-preencher os campos ajustáveis antes de simular um
+    cenário (POST /predict com `overrides`).
+    """
+    try:
+        return {"sk_id_curr": sk_id_curr, "features": get_client_snapshot(sk_id_curr)}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))

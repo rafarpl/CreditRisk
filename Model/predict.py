@@ -45,6 +45,29 @@ from config import ABT_DATA_PATH, MODEL_PATH, ID_COLUMN, TARGET_COLUMN
 # quanto no --threshold da CLI.
 DEFAULT_THRESHOLD = 0.5
 
+# Features usadas para permitir ajuste manual na demo (Streamlit): o
+# cliente é buscado normalmente pelo SK_ID_CURR, mas essas features podem
+# ser sobrescritas para simular "e se" (ex.: e se a renda relativa fosse
+# maior?). Dois grupos, nessa ordem (decisão registrada com o autor em
+# 14/07/2026):
+#   1. Ratios de negócio (PAYMENT_RATE .. DAYS_EMPLOYED_PERC) — fáceis de
+#      explicar, todas normalizadas.
+#   2. DAYS_BIRTH (idade) + EXT_SOURCE_1/2/3 — não são ratios, mas são,
+#      respectivamente, a feature mais estável (cv=0,033) e as 3 mais
+#      fortes de todo o modelo (ver feature_importance.csv) — sem elas a
+#      demo não refletiria os principais drivers da decisão.
+API_FEATURES = [
+    "PAYMENT_RATE",
+    "ANNUITY_INCOME_PERC",
+    "INCOME_CREDIT_PERC",
+    "DEBT_INCOME_RATIO",
+    "DAYS_EMPLOYED_PERC",
+    "DAYS_BIRTH",
+    "EXT_SOURCE_1",
+    "EXT_SOURCE_2",
+    "EXT_SOURCE_3",
+]
+
 
 def _sanitize(col: str) -> str:
     """
@@ -113,22 +136,50 @@ def fetch_client_features(
     raise KeyError(f"SK_ID_CURR={sk_id_curr} não encontrado em {abt_path}.")
 
 
+def get_client_snapshot(
+    sk_id_curr: int,
+    feature_names: list = API_FEATURES,
+    model_path: str = MODEL_PATH,
+) -> dict:
+    """
+    Retorna os valores REAIS atuais de um subconjunto de features de um
+    cliente (default: API_FEATURES). Usado para pré-preencher os campos
+    ajustáveis na demo antes de simular um cenário — sem isso, o usuário
+    ajustaria features "às cegas", sem saber o ponto de partida real do
+    cliente.
+    """
+    artifact = load_model(model_path)
+    row = fetch_client_features(sk_id_curr, artifact["features"])
+    return {f: (None if pd.isna(row.get(f)) else float(row[f])) for f in feature_names}
+
+
 def predict_by_id(
     sk_id_curr: int,
     threshold: float = DEFAULT_THRESHOLD,
     model_path: str = MODEL_PATH,
+    overrides: dict | None = None,
 ) -> dict:
     """
     Retorna a probabilidade de inadimplência (TARGET=1) para um cliente.
 
     threshold: corte de decisão (default 0.5). Ver docstring de
     DEFAULT_THRESHOLD sobre por que isso é uma escolha de negócio.
+
+    overrides: dict opcional {feature: valor} que sobrescreve as features
+    reais do cliente antes da predição — permite simular "e se" (ex.: e se
+    a taxa parcela/renda fosse menor?). Pensado para as API_FEATURES, mas
+    aceita qualquer feature válida do modelo.
     """
     artifact = load_model(model_path)
     model = artifact["model"]
     features = artifact["features"]
 
     row = fetch_client_features(sk_id_curr, features)
+
+    if overrides:
+        for feat, value in overrides.items():
+            if feat in features:
+                row[feat] = value
 
     # reindex (não seleção direta) tolera features ausentes na ABT atual —
     # viram NaN, que o LightGBM trata nativamente sem quebrar a predição.
