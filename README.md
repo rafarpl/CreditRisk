@@ -55,12 +55,26 @@ CreditRisk/
 ├── Model/
 │   ├── baseline.py                → treino do modelo baseline (sem tuning)
 │   ├── tune.py                    → otimização de hiperparâmetros
-│   ├── train.py                   → treino final com K-Fold Cross Validation
+│   ├── train.py                   → treino final com K-Fold Cross Validation + serializa model.pkl
+│   ├── predict.py                 → predição de um cliente pelo SK_ID_CURR (entregável individual)
+│   ├── model.pkl                  → artefato do modelo final (gerado por train.py)
 │   └── raw_data/                  → CSVs originais do dataset
+│
+├── MLOps/                          → entregável individual (deploy e arquitetura)
+│   ├── README.md                  → arquitetura da solução + monitoramento + agentes de IA
+│   ├── docker-compose.yml         → Airflow + Postgres + API + Streamlit
+│   ├── pipeline_orchestration.py  → DAG do Airflow (sanitize → build_abt → train)
+│   └── app/
+│       ├── main.py                → API FastAPI (POST /predict, GET /health)
+│       ├── streamlit_app.py       → interface de demo (consome a API)
+│       ├── Dockerfile             → imagem da API
+│       ├── Dockerfile.streamlit   → imagem do Streamlit
+│       └── requirements.txt       → dependências específicas do deploy
 │
 ├── config.py                      → variáveis, caminhos e parâmetros globais do projeto
 ├── requirements.txt                → dependências do projeto
 ├── best_params.json                → hiperparâmetros otimizados (gerado por tune.py)
+├── .env.example                    → template de variáveis de ambiente (docker-compose)
 └── README.md
 ```
 
@@ -86,6 +100,12 @@ pip install -r requirements.txt
 ## 🚀 Como treinar o modelo
 
 > ⚠️ **Importante**: como `config.py` está na raiz do projeto, todos os scripts devem ser executados **a partir da pasta raiz `CreditRisk/`**, usando o modo módulo (`-m`), para que os imports funcionem corretamente.
+>
+> `DATA_DIR` (usado para localizar `raw_data/`, `clean_data.csv`, `abt.csv` e
+> `Model/model.pkl`) tem como padrão a própria pasta onde `config.py` está — não
+> precisa configurar nada para rodar localmente. Só defina a variável de ambiente
+> `DATA_DIR` manualmente se quiser apontar para um caminho diferente (é o que o
+> `docker-compose.yml` faz, apontando para `/opt/project` dentro dos containers).
 
 ### 1. Sanitizar os dados brutos
 ```bash
@@ -115,10 +135,18 @@ Gera/atualiza o arquivo `best_params.json` com os melhores hiperparâmetros enco
 ```bash
 python -m Model.train
 ```
-Lê `abt.csv` e `best_params.json`, treina o LightGBM com K-Fold Cross Validation e gera:
+Lê `abt.csv` e `best_params.json`, treina o LightGBM com K-Fold Cross Validation (usado
+só para **validação** — estima o AUC honestamente e o nº de árvores via early stopping)
+e depois treina **um modelo final** em 100% dos dados rotulados. Gera:
 - `submission.csv` — predições do conjunto de teste
 - `feature_importance.csv` — importância das features
 - `lgbm_importances.png` — gráfico de importância das features
+- `Model/model.pkl` — modelo final serializado (usado por `Model/predict.py` e pela API) — ver seção 7
+
+> Para rodar rápido em máquinas com pouca RAM/CPU (ex.: debug), defina a variável de
+> ambiente `TRAIN_SAMPLE_ROWS` (ex.: `TRAIN_SAMPLE_ROWS=15000 python -m Model.train`)
+> para treinar numa amostra. **Para a entrega final, rode sem essa variável** — o
+> `model.pkl` fica marcado com `metadata["is_sample"] = True` quando treinado em amostra.
 
 ### 6. Avaliar o modelo
 Abra e execute os notebooks em `Analysis/`:
@@ -130,6 +158,58 @@ jupyter notebook Analysis/kpi_analysis.ipynb
 
 ---
 
+## 🔮 Como executar o serviço de predição (entregável individual)
+
+Pré-requisito: `Model/model.pkl` precisa existir (ver seção 5, "Como treinar o modelo").
+O modelo é consultado por `SK_ID_CURR` (ID do cliente já presente em `abt.csv`) — não
+por campos digitados num formulário. O motivo está documentado na docstring de
+`Model/predict.py` e na seção 1 de `MLOps/README.md`: o modelo usa 346 features vindas
+de 6 tabelas (histórico de bureau, operações anteriores, comportamento de pagamento),
+que não estão disponíveis num formulário de solicitação preenchido na hora.
+
+### Opção A — CLI direta (sem servidor)
+
+```bash
+python -m Model.predict --sk-id-curr 100002
+python -m Model.predict --sk-id-curr 100002 --threshold 0.3   # ajusta o corte aprovar/negar
+```
+
+### Opção B — API FastAPI (local, sem Docker)
+
+```bash
+pip install -r MLOps/app/requirements.txt
+uvicorn MLOps.app.main:app --reload --port 8000
+```
+
+```bash
+curl -X POST "http://localhost:8000/predict" \
+  -H "Content-Type: application/json" \
+  -d '{"sk_id_curr": 100002, "threshold": 0.5}'
+```
+
+Documentação interativa (Swagger UI): http://localhost:8000/docs
+
+### Opção C — Stack completa via docker-compose (Airflow + API + Streamlit)
+
+```bash
+cd MLOps
+cp ../.env.example ../.env      # ajuste AIRFLOW_UID (rode `id -u` no Linux/macOS)
+docker-compose --env-file ../.env up -d
+```
+
+O `airflow-webserver`/`airflow-scheduler` esperam automaticamente o `airflow-init`
+terminar (migração do banco + criação do usuário) antes de subir — não precisa rodar
+o init manualmente.
+
+- **Airflow** (orquestra sanitize → build_abt → train): http://localhost:8080 (`airflow` / `airflow`)
+- **API**: http://localhost:8000/docs
+- **Streamlit** (interface de demo, consome a API): http://localhost:8501
+
+Detalhes de arquitetura, monitoramento em produção e proposta de agentes de IA:
+[`MLOps/README.md`](MLOps/README.md).
+
+---
+
 ## 📦 Principais arquivos gerados
 
 | Arquivo | Descrição |
@@ -137,6 +217,7 @@ jupyter notebook Analysis/kpi_analysis.ipynb
 | `clean_data.csv` | Dados limpos e padronizados da tabela principal |
 | `abt.csv` | Tabela analítica completa (todas as features) |
 | `best_params.json` | Hiperparâmetros otimizados do LightGBM |
+| `Model/model.pkl` | Modelo final serializado + features + metadados (AUC, data de treino, `is_sample`) |
 | `submission.csv` | Predições do modelo final para o conjunto de teste |
 | `submission_baseline.csv` | Predições do modelo baseline |
 | `feature_importance.csv` | Importância de features do modelo final |

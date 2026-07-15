@@ -173,12 +173,14 @@ def run():
     df = sanitize_column_names(df)
 
     # Converte colunas object/string remanescentes para numérico.
-    # Pandas 3 introduziu o dtype "str" como distinto de "object" — uma coluna
-    # de texto pode ter qualquer um dos dois dependendo de como foi criada.
-    # Incluímos ambos explicitamente para não deixar nenhuma coluna de texto
-    # passar intacta para o clean_data.csv (o que quebraria modelos lineares
-    # como a Regressão Logística mais adiante no pipeline).
-    text_cols = df.select_dtypes(include=["object", "str"]).columns
+    # select_dtypes(include=["object", "str"]) quebra em pandas >= 2.2 com
+    # TypeError ("numpy string dtypes are not allowed"), mesmo dataframe sem
+    # nenhuma coluna de texto — mesmo bug já corrigido em abt_transform.py.
+    # pd.api.types.is_string_dtype cobre "object" e o dtype "str"/"string"
+    # nativo sem essa incompatibilidade, então nenhuma coluna de texto passa
+    # intacta para o clean_data.csv (o que quebraria modelos lineares como a
+    # Regressão Logística mais adiante no pipeline).
+    text_cols = [c for c in df.columns if pd.api.types.is_string_dtype(df[c])]
     for col in text_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 

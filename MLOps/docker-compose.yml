@@ -1,0 +1,152 @@
+# docker-compose.yml — Orquestração da etapa individual (entregável).
+#
+# Sobe 3 grupos de serviços:
+#   1. Airflow (postgres + init + webserver + scheduler) — orquestra o
+#      pipeline de dados + treino. Ver pipeline_orchestration.py (DAG
+#      "credit_risk_pipeline": sanitize -> build_abt -> train).
+#   2. api — FastAPI servindo Model/predict.py como serviço de predição
+#      (POST /predict).
+#   3. streamlit — interface de demo que consome a api via HTTP.
+#
+# Pré-requisitos antes de subir:
+#   - Dados brutos em raw_data/ (não versionados — ver README.md raiz,
+#     seção "Como baixar os dados").
+#   - Para a API/Streamlit responderem de verdade, Model/model.pkl precisa
+#     existir: rode `python -m Model.train` localmente OU dispare a DAG
+#     "credit_risk_pipeline" pelo Airflow (ela treina e salva o modelo).
+#
+# Como rodar (a partir desta pasta, MLOps/):
+#   cp ../.env.example ../.env    # se ainda não existir; ajuste AIRFLOW_UID
+#   docker-compose --env-file ../.env up -d
+#
+#   airflow-webserver e airflow-scheduler dependem de airflow-init terminar
+#   com sucesso (depends_on ... condition: service_completed_successfully)
+#   — o próprio `up -d` já dispara o init na ordem certa, não precisa rodar
+#   `run --rm airflow-init` manualmente. Se quiser re-rodar o init sozinho
+#   (ex.: recriar o usuário admin), o comando ainda funciona:
+#   docker-compose --env-file ../.env run --rm airflow-init
+#
+#   Airflow:   http://localhost:8080  (usuário/senha: airflow / airflow)
+#   API:       http://localhost:8000/docs
+#   Streamlit: http://localhost:8501
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: America/Sao_Paulo
+    # Instala as libs do pipeline de dados/modelo dentro da imagem base do
+    # Airflow. Prático para o escopo deste projeto (dev/demo); em produção,
+    # o recomendado é embutir essas libs numa imagem Docker customizada
+    # (build próprio), não instalar via env var a cada start — ver
+    # MLOps/README.md, seção de próximos passos.
+    _PIP_ADDITIONAL_REQUIREMENTS: "lightgbm>=4.0 scikit-learn>=1.3 pandas>=2.0 numpy>=1.24 joblib>=1.3"
+    DATA_DIR: /opt/project
+    PYTHONPATH: /opt/project
+  volumes:
+    - ..:/opt/project
+    - airflow_logs:/opt/airflow/logs
+    - ./pipeline_orchestration.py:/opt/airflow/dags/pipeline_orchestration.py:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username airflow --password airflow \
+          --firstname Rafael --lastname Leitao \
+          --role Admin --email rafarpl@gmail.com || true
+        # chown por ÚLTIMO, não antes: `airflow db migrate` inicializa o
+        # sistema de log do Airflow como efeito colateral e cria
+        # /opt/airflow/logs/scheduler/<data>/ nesse processo — como
+        # airflow-init roda como root, essas subpastas nascem com dono
+        # root. Se o chown rodasse antes (como na primeira tentativa), essas
+        # pastas criadas depois ficavam de fora e o scheduler (uid 50000)
+        # não conseguia escrever nelas.
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs
+    user: "0:0"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  api:
+    build:
+      context: ..
+      dockerfile: MLOps/app/Dockerfile
+    environment:
+      DATA_DIR: /opt/project
+    volumes:
+      - ..:/opt/project
+    working_dir: /opt/project
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: ..
+      dockerfile: MLOps/app/Dockerfile.streamlit
+    environment:
+      DATA_DIR: /opt/project
+      API_URL: http://api:8000
+    volumes:
+      - ..:/opt/project
+    working_dir: /opt/project
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  airflow_logs:

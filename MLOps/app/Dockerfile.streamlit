@@ -1,0 +1,21 @@
+# Dockerfile.streamlit — interface de demo (consome a API via HTTP).
+#
+# Mesmo esquema do Dockerfile da API: contexto de build é a raiz do repo (..).
+
+FROM python:3.11-slim
+
+WORKDIR /opt/project
+
+# libgomp1: mesma exigência do LightGBM explicada no Dockerfile da API.
+# O requirements.txt é compartilhado (inclui lightgbm), então mesmo o
+# Streamlit precisa disso para não quebrar caso algum módulo importado
+# transitivamente carregue lightgbm.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY MLOps/app/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "MLOps/app/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]

@@ -10,8 +10,16 @@ import os
 # ============================================================
 # CAMINHOS DE DADOS
 # ============================================================
-# Ajuste DATA_DIR para o diretório onde seus CSVs estão localmente.
-DATA_DIR = os.environ.get("DATA_DIR", "/Users/ronaldo.costa/dev/CreditRisk")
+# DATA_DIR aponta, por padrão, para a própria pasta onde este config.py está
+# (a raiz do repositório) — funciona em qualquer máquina sem configuração
+# extra, desde que os scripts sejam rodados com `python -m ...` a partir da
+# raiz (ver README.md). Antes, o default era um caminho absoluto hardcoded
+# da máquina de um integrante do grupo, o que quebrava em qualquer outra
+# máquina que não setasse DATA_DIR manualmente.
+# Ainda pode ser sobrescrito via variável de ambiente DATA_DIR quando fizer
+# sentido (ex.: dentro de containers Docker, onde o projeto é montado em
+# /opt/project — ver MLOps/docker-compose.yml).
+DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 
 RAW_DATA = {
     "application_train": os.path.join(DATA_DIR, "raw_data", "application_train.csv"),
@@ -26,6 +34,10 @@ RAW_DATA = {
 
 CLEAN_DATA_PATH  = os.path.join(DATA_DIR, "clean_data.csv")
 ABT_DATA_PATH    = os.path.join(DATA_DIR, "abt.csv")
+
+# Artefato do modelo final (treinado em 100% dos dados rotulados, após a
+# validação via K-Fold em train.py). Usado por Model/predict.py e pela API.
+MODEL_PATH       = os.path.join(DATA_DIR, "Model", "model.pkl")
 
 # ============================================================
 # PARÂMETROS DO PIPELINE

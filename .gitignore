@@ -1,6 +1,7 @@
 /.DS_Store
 /.vscode
-/__pycache__
+__pycache__/
+/.env
 /abt.csv
 /feature_importance.csv
 /feature_importance_baseline.csv

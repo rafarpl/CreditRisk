@@ -1,0 +1,16 @@
+# .dockerignore — evita que o build da API/Streamlit (MLOps/app/Dockerfile*)
+# envie o repositório inteiro como contexto. Dados e artefatos grandes
+# entram via volume no docker-compose (ver MLOps/docker-compose.yml), não
+# via COPY na imagem — não precisam estar no contexto de build.
+
+.git
+.venv
+venv
+__pycache__
+*.pyc
+
+raw_data/
+*.csv
+
+Analysis/
+.DS_Store
